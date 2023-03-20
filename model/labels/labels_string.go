@@ -411,7 +411,6 @@ func FromStrings(ss ...string) Labels {
 		ls = append(ls, Label{Name: ss[i], Value: ss[i+1]})
 	}
 
-	slices.SortFunc(ls, func(a, b Label) bool { return a.Name < b.Name })
 	return New(ls...)
 }
 
@@ -585,6 +584,44 @@ func (b *Builder) Set(n, v string) *Builder {
 	b.add = append(b.add, Label{Name: n, Value: v})
 
 	return b
+}
+
+func (b *Builder) Get(n string) string {
+	if slices.Contains(b.del, n) {
+		return ""
+	}
+	for _, a := range b.add {
+		if a.Name == n {
+			return a.Value
+		}
+	}
+	return b.base.Get(n)
+}
+
+// Range calls f on each label in the Builder.
+func (b *Builder) Range(f func(l Label)) {
+	// Stack-based arrays to avoid heap allocation in most cases.
+	var addStack [1024]Label
+	var delStack [1024]string
+	// Take a copy of add and del, so they are unaffected by calls to Set() or Del().
+	origAdd, origDel := append(addStack[:0], b.add...), append(delStack[:0], b.del...)
+	b.base.Range(func(l Label) {
+		if !slices.Contains(origDel, l.Name) && !contains(origAdd, l.Name) {
+			f(l)
+		}
+	})
+	for _, a := range origAdd {
+		f(a)
+	}
+}
+
+func contains(s []Label, n string) bool {
+	for _, a := range s {
+		if a.Name == n {
+			return true
+		}
+	}
+	return false
 }
 
 // Labels returns the labels from the builder, adding them to res if non-nil.

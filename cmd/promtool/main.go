@@ -31,6 +31,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/alecthomas/kingpin/v2"
 	"github.com/go-kit/log"
 	"github.com/google/pprof/profile"
 	"github.com/prometheus/client_golang/api"
@@ -41,7 +42,6 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/common/version"
 	"github.com/prometheus/exporter-toolkit/web"
-	"gopkg.in/alecthomas/kingpin.v2"
 	"gopkg.in/yaml.v2"
 
 	dto "github.com/prometheus/client_model/go"
@@ -59,6 +59,7 @@ import (
 	_ "github.com/prometheus/prometheus/plugins" // Register plugins.
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/scrape"
+	"github.com/prometheus/prometheus/util/documentcli"
 )
 
 const (
@@ -223,6 +224,8 @@ func main() {
 
 	featureList := app.Flag("enable-feature", "Comma separated feature names to enable (only PromQL related and no-default-scrape-port). See https://prometheus.io/docs/prometheus/latest/feature_flags/ for the options and more details.").Default("").Strings()
 
+	documentationCmd := app.Command("write-documentation", "Generate command line documentation. Internal use.").Hidden()
+
 	parsedCmd := kingpin.MustParse(app.Parse(os.Args[1:]))
 
 	var p printer
@@ -329,6 +332,8 @@ func main() {
 
 	case importRulesCmd.FullCommand():
 		os.Exit(checkErr(importRules(serverURL, httpRoundTripper, *importRulesStart, *importRulesEnd, *importRulesOutputDir, *importRulesEvalInterval, *maxBlockDuration, *importRulesFiles...)))
+	case documentationCmd.FullCommand():
+		os.Exit(checkErr(documentcli.GenerateMarkdown(app.Model(), os.Stdout)))
 	}
 }
 
@@ -1261,8 +1266,11 @@ func checkTargetGroupsForAlertmanager(targetGroups []*targetgroup.Group, amcfg *
 }
 
 func checkTargetGroupsForScrapeConfig(targetGroups []*targetgroup.Group, scfg *config.ScrapeConfig) error {
+	var targets []*scrape.Target
+	lb := labels.NewBuilder(labels.EmptyLabels())
 	for _, tg := range targetGroups {
-		_, failures := scrape.TargetsFromGroup(tg, scfg, false)
+		var failures []error
+		targets, failures = scrape.TargetsFromGroup(tg, scfg, false, targets, lb)
 		if len(failures) > 0 {
 			first := failures[0]
 			return first
