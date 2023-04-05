@@ -45,6 +45,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/util/stats"
+	"github.com/prometheus/prometheus/util/zeropool"
 )
 
 const (
@@ -1794,18 +1795,16 @@ func (ev *evaluator) vectorSelectorSingle(it *storage.MemoizedSeriesIterator, no
 	return t, v, h, true
 }
 
-var pointPool = sync.Pool{}
+var pointPool zeropool.Pool[[]Point]
 
 func getPointSlice(sz int) []Point {
-	p := pointPool.Get()
-	if p != nil {
-		return p.([]Point)
+	if p := pointPool.Get(); p != nil {
+		return p
 	}
 	return make([]Point, 0, sz)
 }
 
 func putPointSlice(p []Point) {
-	//nolint:staticcheck // Ignore SA6002 relax staticcheck verification.
 	pointPool.Put(p[:0])
 }
 
@@ -2193,7 +2192,7 @@ func resultMetric(lhs, rhs labels.Labels, op parser.ItemType, matching *parser.V
 		}
 	}
 
-	ret := enh.lb.Labels(labels.EmptyLabels())
+	ret := enh.lb.Labels()
 	enh.resultMetric[str] = ret
 	return ret
 }
@@ -2233,7 +2232,7 @@ func (ev *evaluator) VectorscalarBinop(op parser.ItemType, lhs Vector, rhs Scala
 }
 
 func dropMetricName(l labels.Labels) labels.Labels {
-	return labels.NewBuilder(l).Del(labels.MetricName).Labels(labels.EmptyLabels())
+	return labels.NewBuilder(l).Del(labels.MetricName).Labels()
 }
 
 // scalarBinop evaluates a binary operation between two Scalars.
@@ -2367,7 +2366,7 @@ func (ev *evaluator) aggregation(op parser.ItemType, grouping []string, without 
 		if op == parser.COUNT_VALUES {
 			enh.resetBuilder(metric)
 			enh.lb.Set(valueLabel, strconv.FormatFloat(s.V, 'f', -1, 64))
-			metric = enh.lb.Labels(labels.EmptyLabels())
+			metric = enh.lb.Labels()
 
 			// We've changed the metric so we have to recompute the grouping key.
 			recomputeGroupingKey = true
@@ -2389,10 +2388,10 @@ func (ev *evaluator) aggregation(op parser.ItemType, grouping []string, without 
 			if without {
 				enh.lb.Del(grouping...)
 				enh.lb.Del(labels.MetricName)
-				m = enh.lb.Labels(labels.EmptyLabels())
+				m = enh.lb.Labels()
 			} else if len(grouping) > 0 {
 				enh.lb.Keep(grouping...)
-				m = enh.lb.Labels(labels.EmptyLabels())
+				m = enh.lb.Labels()
 			} else {
 				m = labels.EmptyLabels()
 			}
@@ -2508,39 +2507,39 @@ func (ev *evaluator) aggregation(op parser.ItemType, grouping []string, without 
 			group.value += delta * (s.V - group.mean)
 
 		case parser.TOPK:
-			if int64(len(group.heap)) < k || group.heap[0].V < s.V || math.IsNaN(group.heap[0].V) {
-				if int64(len(group.heap)) == k {
-					if k == 1 { // For k==1 we can replace in-situ.
-						group.heap[0] = Sample{
-							Point:  Point{V: s.V},
-							Metric: s.Metric,
-						}
-						break
-					}
-					heap.Pop(&group.heap)
-				}
+			// We build a heap of up to k elements, with the smallest element at heap[0].
+			if int64(len(group.heap)) < k {
 				heap.Push(&group.heap, &Sample{
 					Point:  Point{V: s.V},
 					Metric: s.Metric,
 				})
+			} else if group.heap[0].V < s.V || (math.IsNaN(group.heap[0].V) && !math.IsNaN(s.V)) {
+				// This new element is bigger than the previous smallest element - overwrite that.
+				group.heap[0] = Sample{
+					Point:  Point{V: s.V},
+					Metric: s.Metric,
+				}
+				if k > 1 {
+					heap.Fix(&group.heap, 0) // Maintain the heap invariant.
+				}
 			}
 
 		case parser.BOTTOMK:
-			if int64(len(group.reverseHeap)) < k || group.reverseHeap[0].V > s.V || math.IsNaN(group.reverseHeap[0].V) {
-				if int64(len(group.reverseHeap)) == k {
-					if k == 1 { // For k==1 we can replace in-situ.
-						group.reverseHeap[0] = Sample{
-							Point:  Point{V: s.V},
-							Metric: s.Metric,
-						}
-						break
-					}
-					heap.Pop(&group.reverseHeap)
-				}
+			// We build a heap of up to k elements, with the biggest element at heap[0].
+			if int64(len(group.reverseHeap)) < k {
 				heap.Push(&group.reverseHeap, &Sample{
 					Point:  Point{V: s.V},
 					Metric: s.Metric,
 				})
+			} else if group.reverseHeap[0].V > s.V || (math.IsNaN(group.reverseHeap[0].V) && !math.IsNaN(s.V)) {
+				// This new element is smaller than the previous biggest element - overwrite that.
+				group.reverseHeap[0] = Sample{
+					Point:  Point{V: s.V},
+					Metric: s.Metric,
+				}
+				if k > 1 {
+					heap.Fix(&group.reverseHeap, 0) // Maintain the heap invariant.
+				}
 			}
 
 		case parser.QUANTILE:

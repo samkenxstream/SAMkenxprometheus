@@ -71,6 +71,8 @@ const (
 	lintOptionAll            = "all"
 	lintOptionDuplicateRules = "duplicate-rules"
 	lintOptionNone           = "none"
+	checkHealth              = "/-/healthy"
+	checkReadiness           = "/-/ready"
 )
 
 var lintOptions = []string{lintOptionAll, lintOptionDuplicateRules, lintOptionNone}
@@ -112,6 +114,14 @@ func main() {
 		"web-config-files",
 		"The config files to check.",
 	).Required().ExistingFiles()
+
+	checkServerHealthCmd := checkCmd.Command("healthy", "Check if the Prometheus server is healthy.")
+	checkServerHealthCmd.Flag("http.config.file", "HTTP client configuration file for promtool to connect to Prometheus.").PlaceHolder("<filename>").ExistingFileVar(&httpConfigFilePath)
+	checkServerHealthCmd.Flag("url", "The URL for the Prometheus server.").Default("http://localhost:9090").URLVar(&serverURL)
+
+	checkServerReadyCmd := checkCmd.Command("ready", "Check if the Prometheus server is ready.")
+	checkServerReadyCmd.Flag("http.config.file", "HTTP client configuration file for promtool to connect to Prometheus.").PlaceHolder("<filename>").ExistingFileVar(&httpConfigFilePath)
+	checkServerReadyCmd.Flag("url", "The URL for the Prometheus server.").Default("http://localhost:9090").URLVar(&serverURL)
 
 	checkRulesCmd := checkCmd.Command("rules", "Check if the rule files are valid or not.")
 	ruleFiles := checkRulesCmd.Arg(
@@ -276,6 +286,12 @@ func main() {
 	case checkConfigCmd.FullCommand():
 		os.Exit(CheckConfig(*agentMode, *checkConfigSyntaxOnly, newLintConfig(*checkConfigLint, *checkConfigLintFatal), *configFiles...))
 
+	case checkServerHealthCmd.FullCommand():
+		os.Exit(checkErr(CheckServerStatus(serverURL, checkHealth, httpRoundTripper)))
+
+	case checkServerReadyCmd.FullCommand():
+		os.Exit(checkErr(CheckServerStatus(serverURL, checkReadiness, httpRoundTripper)))
+
 	case checkWebConfigCmd.FullCommand():
 		os.Exit(CheckWebConfig(*webConfigFiles...))
 
@@ -367,6 +383,43 @@ func newLintConfig(stringVal string, fatal bool) lintConfig {
 
 func (ls lintConfig) lintDuplicateRules() bool {
 	return ls.all || ls.duplicateRules
+}
+
+// Check server status - healthy & ready.
+func CheckServerStatus(serverURL *url.URL, checkEndpoint string, roundTripper http.RoundTripper) error {
+	if serverURL.Scheme == "" {
+		serverURL.Scheme = "http"
+	}
+
+	config := api.Config{
+		Address:      serverURL.String() + checkEndpoint,
+		RoundTripper: roundTripper,
+	}
+
+	// Create new client.
+	c, err := api.NewClient(config)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error creating API client:", err)
+		return err
+	}
+
+	request, err := http.NewRequest("GET", config.Address, nil)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	response, dataBytes, err := c.Do(ctx, request)
+	if err != nil {
+		return err
+	}
+
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("check failed: URL=%s, status=%d", serverURL, response.StatusCode)
+	}
+
+	fmt.Fprintln(os.Stderr, "  SUCCESS: ", string(dataBytes))
+	return nil
 }
 
 // CheckConfig validates configuration files.

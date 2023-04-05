@@ -43,6 +43,17 @@ func TestTargetLabels(t *testing.T) {
 	want := labels.FromStrings(model.JobLabel, "some_job", "foo", "bar")
 	got := target.Labels()
 	require.Equal(t, want, got)
+	i := 0
+	target.LabelsRange(func(l labels.Label) {
+		switch i {
+		case 0:
+			require.Equal(t, labels.Label{Name: "foo", Value: "bar"}, l)
+		case 1:
+			require.Equal(t, labels.Label{Name: model.JobLabel, Value: "some_job"}, l)
+		}
+		i++
+	})
+	require.Equal(t, 2, i)
 }
 
 func TestTargetOffset(t *testing.T) {
@@ -129,7 +140,7 @@ func newTestTarget(targetURL string, deadline time.Duration, lbls labels.Labels)
 	lb.Set(model.AddressLabel, strings.TrimPrefix(targetURL, "http://"))
 	lb.Set(model.MetricsPathLabel, "/metrics")
 
-	return &Target{labels: lb.Labels(labels.EmptyLabels())}
+	return &Target{labels: lb.Labels()}
 }
 
 func TestNewHTTPBearerToken(t *testing.T) {

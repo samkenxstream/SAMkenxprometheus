@@ -130,6 +130,38 @@ Check if the web config files are valid or not.
 
 
 
+##### `promtool check healthy`
+
+Check if the Prometheus server is healthy.
+
+
+
+###### Flags
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| <code class="text-nowrap">--http.config.file</code> | HTTP client configuration file for promtool to connect to Prometheus. |  |
+| <code class="text-nowrap">--url</code> | The URL for the Prometheus server. | `http://localhost:9090` |
+
+
+
+
+##### `promtool check ready`
+
+Check if the Prometheus server is ready.
+
+
+
+###### Flags
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| <code class="text-nowrap">--http.config.file</code> | HTTP client configuration file for promtool to connect to Prometheus. |  |
+| <code class="text-nowrap">--url</code> | The URL for the Prometheus server. | `http://localhost:9090` |
+
+
+
+
 ##### `promtool check rules`
 
 Check if the rule files are valid or not.
